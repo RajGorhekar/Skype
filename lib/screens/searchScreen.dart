@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:gradient_app_bar/gradient_app_bar.dart';
 import 'package:skype/models/user.dart';
-import 'package:skype/resources/firebase_repository.dart';
+import 'package:skype/resources/authMethods.dart';
 import 'package:skype/screens/chatScreens/chatScreen.dart';
 import 'package:skype/utils/universal_variables.dart';
 import 'package:skype/widgets/customTile.dart';
@@ -17,13 +17,13 @@ class _SearchScreenState extends State<SearchScreen> {
   List<User> userList;
   String query = '';
   TextEditingController textEditingController = TextEditingController();
-  FirebaseRepository _repository = FirebaseRepository();
+  AuthMethods authMethods = AuthMethods();
 
   @override
   void initState() {
     super.initState();
-    _repository.getCurrentUser().then((user) {
-      _repository.fetchAllUsers(user).then((List<User> list) {
+    authMethods.getCurrentUser().then((user) {
+      authMethods.fetchAllUsers(user).then((List<User> list) {
         setState(() {
           userList = list;
         });
@@ -98,7 +98,7 @@ class _SearchScreenState extends State<SearchScreen> {
           return CustomTile(
             mini: false,
             onTap: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => ChatScreen(reciever : searchedUser)));
+              Navigator.push(context, MaterialPageRoute(builder: (context) => ChatScreen(receiver : searchedUser)));
             },
             leading: CircleAvatar(
               backgroundImage: NetworkImage(searchedUser.profilePhoto),

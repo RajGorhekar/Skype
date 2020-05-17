@@ -1,16 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:skype/models/message.dart';
+import 'package:skype/enum/userState.dart';
 import 'package:skype/models/user.dart';
 import 'package:skype/utils/utilities.dart';
 
-class FirebaseMethods {
+class AuthMethods {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   static final Firestore firestore = Firestore.instance;
-
-  User user = User();
+  static final CollectionReference _userCollection =
+      firestore.collection('users');
 
   Future<FirebaseUser> getCurrentUser() async {
     FirebaseUser currentUser;
@@ -45,7 +46,7 @@ class FirebaseMethods {
   Future<void> addDataToDb(FirebaseUser currentUser) async {
     String username = Utils.getUsername(currentUser.email);
 
-    user = User(
+    User user = User(
         uid: currentUser.uid,
         email: currentUser.email,
         name: currentUser.displayName,
@@ -58,10 +59,16 @@ class FirebaseMethods {
         .setData(user.toMap(user));
   }
 
-  Future<void> signOut() async {
-    await _googleSignIn.disconnect();
-    await _googleSignIn.signOut();
-    return await _auth.signOut();
+  Future<bool> signOut() async {
+    try {
+      await _googleSignIn.disconnect();
+      await _googleSignIn.signOut();
+      await _auth.signOut();
+      return true;
+    } catch (e) {
+      print(e);
+      return false;
+    }
   }
 
   Future<List<User>> fetchAllUsers(FirebaseUser user) async {
@@ -76,19 +83,34 @@ class FirebaseMethods {
     return userList;
   }
 
-  Future<void> addMessageToDb(
-      Message message, User sender, User receiver) async {
-    var map = message.toMap();
-    await firestore
-        .collection("messages")
-        .document(message.senderId)
-        .collection(message.receiverId)
-        .add(map);
+  Future<User> getUserDetails() async {
+    FirebaseUser currentUser = await getCurrentUser();
+    DocumentSnapshot documentSnapshot =
+        await _userCollection.document(currentUser.uid).get();
 
-    await firestore
-        .collection("messages")
-        .document(message.receiverId)
-        .collection(message.senderId)
-        .add(map);
+    return User.fromMap(documentSnapshot.data);
   }
+
+  Future<User> getUserDetailsById(id) async {
+    try {
+      DocumentSnapshot documentSnapshot =
+          await _userCollection.document(id).get();
+
+      return User.fromMap(documentSnapshot.data);
+    } catch (e) {
+      print(e);
+      return null;
+    }
+  }
+
+  void setUserState({String uid, UserState userState}) {
+    int stateNum = Utils.stateToNum(userState);
+
+    _userCollection.document(uid).updateData({
+      "state": stateNum,
+    });
+  }
+
+  Stream<DocumentSnapshot> getUserStream({@required String uid}) =>
+      _userCollection.document(uid).snapshots();
 }

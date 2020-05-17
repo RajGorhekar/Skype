@@ -1,19 +1,28 @@
-import 'dart:html';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:emoji_picker/emoji_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:skype/enum/viewState.dart';
 import 'package:skype/models/message.dart';
 import 'package:skype/models/user.dart';
-import 'package:skype/resources/firebase_repository.dart';
+import 'package:skype/provider/imageUploadProvider.dart';
+import 'package:skype/resources/authMethods.dart';
+import 'package:skype/resources/chatMethods.dart';
+import 'package:skype/resources/storageMethods.dart';
+import 'package:skype/utils/callUtilities.dart';
+import 'package:skype/utils/permissions.dart';
 import 'package:skype/utils/universal_variables.dart';
+import 'package:skype/utils/utilities.dart';
 import 'package:skype/widgets/appbar.dart';
+import 'package:skype/widgets/cachedImage.dart';
 import 'package:skype/widgets/customTile.dart';
 
 class ChatScreen extends StatefulWidget {
-  final User reciever;
-  const ChatScreen({Key key, this.reciever}) : super(key: key);
+  final User receiver;
+  const ChatScreen({Key key, this.receiver}) : super(key: key);
   @override
   _ChatScreenState createState() => _ChatScreenState();
 }
@@ -24,15 +33,18 @@ class _ChatScreenState extends State<ChatScreen> {
   bool showEmojiPicker = false;
   User sender;
   String _currentUserId;
-  FirebaseRepository _repository = FirebaseRepository();
+  AuthMethods authMethods = AuthMethods();
+  StorageMethods storageMethods = StorageMethods();
+  ChatMethods chatMethods = ChatMethods();
   ScrollController _listController = ScrollController();
   FocusNode textfieldFocus = FocusNode();
-
+  ImageUploadProvider _imageUploadProvider;
+  
   @override
   void initState() {
     // TODO: implement initState
     super.initState();
-    _repository.getCurrentUser().then((user) {
+    authMethods.getCurrentUser().then((user) {
       _currentUserId = user.uid;
       setState(() {
         sender = User(
@@ -46,7 +58,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   showKeyboard() => textfieldFocus.requestFocus();
 
-  hideKeyboard() => textfieldFocus.unfocus();
+  hideKeyboard() {
+    FocusScope.of(context).unfocus();
+  }
 
   hideEmojiContainer() {
     setState(() {
@@ -62,6 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _imageUploadProvider = Provider.of<ImageUploadProvider>(context);
     return Scaffold(
       appBar: customAppBar(context),
       body: Column(
@@ -69,6 +84,13 @@ class _ChatScreenState extends State<ChatScreen> {
           Flexible(
             child: messageList(),
           ),
+          _imageUploadProvider.getViewState == ViewState.LOADING
+              ? Container(
+                  alignment: Alignment.centerRight,
+                  margin: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(),
+                )
+              : Container(),
           chatControls(),
           showEmojiPicker ? Container(child: emojiContainer()) : Container()
         ],
@@ -82,13 +104,13 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           isWriting = true;
         });
-        textFieldController.text = textFieldController.text +emoji.emoji;
+        textFieldController.text = textFieldController.text + emoji.emoji;
       },
       bgColor: UniversalVariables.separatorColor,
       indicatorColor: UniversalVariables.blueColor,
       rows: 4,
       columns: 7,
-      recommendKeywords: ['face','happy','party','sad'],
+      recommendKeywords: ['face', 'happy', 'party', 'sad'],
     );
   }
 
@@ -130,10 +152,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
                 ModalTile(
-                  title: "Media",
-                  subtitle: "Share Photos and Video",
-                  icon: Icons.image,
-                ),
+                    title: "Media",
+                    subtitle: "Share Photos and Video",
+                    icon: Icons.image,
+                    onTap: () {
+                      pickImage(source: ImageSource.gallery);
+                    }),
                 ModalTile(
                     title: "File", subtitle: "Share files", icon: Icons.tab),
                 ModalTile(
@@ -176,7 +200,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Stack(
               children: <Widget>[
                 TextField(
-                  onTap: ()=>hideEmojiContainer(),
+                  onTap: () => hideEmojiContainer(),
                   controller: textFieldController,
                   style: TextStyle(
                     color: Colors.white,
@@ -202,19 +226,23 @@ class _ChatScreenState extends State<ChatScreen> {
                     fillColor: UniversalVariables.separatorColor,
                   ),
                 ),
-                IconButton(
-                    highlightColor: Colors.transparent,
-                    splashColor: Colors.transparent,
-                    icon: Icon(Icons.face),
-                    onPressed: (){
-                      if(!showEmojiPicker){
-                        hideKeyboard();
-                        showEmojiContainer();
-                      }else{
-                        hideEmojiContainer();
-                        showKeyboard();
-                      }
-                    })
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                      highlightColor: Colors.transparent,
+                      splashColor: Colors.transparent,
+                      icon: Icon(Icons.face),
+                      onPressed: () async{
+                        if (!showEmojiPicker) {
+                          hideKeyboard();
+                          await Future.delayed(const Duration(milliseconds: 10));
+                          showEmojiContainer();
+                        } else {
+                          hideEmojiContainer();
+                          showKeyboard();
+                        }
+                      }),
+                )
               ],
             ),
           ),
@@ -224,7 +252,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   padding: EdgeInsets.symmetric(horizontal: 10),
                   child: Icon(Icons.record_voice_over),
                 ),
-          isWriting ? Container() : Icon(Icons.camera_alt),
+          isWriting
+              ? Container()
+              : GestureDetector(
+                  onTap: () => pickImage(source: ImageSource.camera),
+                  child: Icon(Icons.camera_alt)),
           isWriting
               ? Container(
                   margin: EdgeInsets.only(left: 10),
@@ -246,7 +278,7 @@ class _ChatScreenState extends State<ChatScreen> {
   sendMessage() {
     var text = textFieldController.text;
     Message message = Message(
-      receiverId: widget.reciever.uid,
+      receiverId: widget.receiver.uid,
       senderId: sender.uid,
       message: text,
       timestamp: Timestamp.now(),
@@ -256,7 +288,17 @@ class _ChatScreenState extends State<ChatScreen> {
       isWriting = false;
     });
     textFieldController.clear();
-    _repository.addMessageToDb(message, sender, widget.reciever);
+    chatMethods.addMessageToDb(message, sender, widget.receiver);
+  }
+
+  pickImage({@required ImageSource source}) async {
+    _imageUploadProvider.setToLoading();
+    File selectedImage = await Utils.pickImage(source,context,_imageUploadProvider);
+    storageMethods.uploadImage(
+        selectedImage,
+        widget.receiver.uid,
+        _currentUserId,
+        _imageUploadProvider);
   }
 
   Widget messageList() {
@@ -264,12 +306,13 @@ class _ChatScreenState extends State<ChatScreen> {
         stream: Firestore.instance
             .collection('messages')
             .document(_currentUserId)
-            .collection(widget.reciever.uid)
+            .collection(widget.receiver.uid)
             .orderBy('timestamp', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
-            return Center(child: CircularProgressIndicator());
+            return Center(
+              child: CircularProgressIndicator());
           } else {
             // SchedulerBinding.instance.addPostFrameCallback((_) {
             //   _listController.animateTo(_listController.position.minScrollExtent, duration: Duration(milliseconds: 250), curve: Curves.easeInOut);
@@ -295,28 +338,33 @@ class _ChatScreenState extends State<ChatScreen> {
           : Alignment.centerLeft,
       child: _message.senderId == _currentUserId
           ? senderLayout(_message)
-          : recieverLayout(_message),
+          : receiverLayout(_message),
     );
   }
 
   getMessage(Message message) {
-    return Text(
-      message.message,
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: 16.0,
-      ),
-    );
+    return message.type != 'image'
+        ? Text(
+            message.message,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16.0,
+            ),
+          )
+        : message.photoUrl != null
+            ? CachedImage(message.photoUrl,height: 200,width: 150,radius : 10)
+            : Text("Url was null");
   }
 
   Widget senderLayout(message) {
     Radius r = Radius.circular(10);
     return Container(
-      margin: EdgeInsets.only(top: 5),
+      margin: EdgeInsets.only(top: 5,right : 10),
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.width * 0.65,
       ),
       decoration: BoxDecoration(
+        gradient: message.type != 'image' ? UniversalVariables.fabGradient :null,
         color: UniversalVariables.senderColor,
         borderRadius: BorderRadius.only(
           topLeft: r,
@@ -325,15 +373,15 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
       child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           child: getMessage(message)),
     );
   }
 
-  Widget recieverLayout(Message message) {
+  Widget receiverLayout(Message message) {
     Radius r = Radius.circular(10);
     return Container(
-      margin: EdgeInsets.only(top: 10),
+      margin: EdgeInsets.only(top: 5 ,left : 10),
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.width * 0.65,
       ),
@@ -345,19 +393,25 @@ class _ChatScreenState extends State<ChatScreen> {
           bottomRight: r,
         ),
       ),
-      child: Padding(padding: EdgeInsets.all(10), child: getMessage(message)),
+      child: Padding(padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10), child: getMessage(message)),
     );
   }
 
   CustomAppBar customAppBar(context) {
     return CustomAppBar(
-      title: Text(widget.reciever.name),
+      title: Text(widget.receiver.name),
       actions: <Widget>[
         IconButton(
           icon: Icon(
             Icons.video_call,
           ),
-          onPressed: () {},
+          onPressed: () async {await Permissions.cameraAndMicrophonePermissionsGranted()?
+            CallUtils.dial(
+              from : sender,
+              to : widget.receiver,
+              context: context
+            ):{};
+          },
         ),
         IconButton(
           icon: Icon(
@@ -383,12 +437,14 @@ class ModalTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final IconData icon;
+  final Function onTap;
 
   const ModalTile(
       {Key key,
       @required this.title,
       @required this.subtitle,
-      @required this.icon})
+      @required this.icon,
+      this.onTap})
       : super(key: key);
 
   @override
@@ -396,6 +452,7 @@ class ModalTile extends StatelessWidget {
     return Padding(
         padding: EdgeInsets.only(left: 10, right: 10),
         child: CustomTile(
+          onTap: onTap,
           mini: false,
           leading: Container(
             margin: EdgeInsets.only(right: 10),

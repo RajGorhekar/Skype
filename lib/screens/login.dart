@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:skype/resources/firebase_repository.dart';
+import 'package:skype/resources/authMethods.dart';
 import 'package:skype/screens/home.dart';
 import 'package:skype/utils/universal_variables.dart';
 
@@ -11,7 +11,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  FirebaseRepository _repository = FirebaseRepository();
+  AuthMethods authMethods = AuthMethods();
   String loginVal = 'LOGIN';
   @override
   Widget build(BuildContext context) {
@@ -41,11 +41,11 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() {
       loginVal = 'Please Wait ...' ;
     });
-    _repository.signIn().then((FirebaseUser user){
+    authMethods.signIn().then((FirebaseUser user){
       if(user != null){
-        _repository.authenticateUser(user).then((isNewUser){
+        authMethods.authenticateUser(user).then((isNewUser){
           if(isNewUser){
-             _repository.addDataToDb(user).then((value){
+             authMethods.addDataToDb(user).then((value){
                loginVal = 'LOGIN';
                Navigator.push(context, MaterialPageRoute(builder : (context){
                 return HomeScreen();
